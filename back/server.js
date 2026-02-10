@@ -43,6 +43,18 @@ const pool = new Pool({
   port: process.env.DB_PORT || 5432,
 });
 
+// --- AUTHENTICATION MIDDLEWARE ---
+// This function checks if the user is logged in.
+// If yes, it allows the request to continue.
+// If no, it blocks it immediately with a 401 error.
+const ensureAuthenticated = (req, res, next) => {
+  if (req.isAuthenticated()) {
+    return next(); // User is good, proceed to the route!
+  }
+  // User is not logged in
+  res.status(401).json({ message: "Please log in to access this resource" });
+};
+
 // --- ROUTES ---
 
 passport.use(new GoogleStrategy({
@@ -284,134 +296,118 @@ app.get('/products', async (req, res) => {
   }
 });
 
-// ADD TO CART
-app.post('/cart/add', async (req, res) => {
-  // Check Auth
-  if (!req.isAuthenticated() || !req.user) {
-    return res.status(401).json({ message: "Please login first" });
-  }
+// ==========================================
+// CART & PAYMENT ROUTES (Protected)
+// ==========================================
 
-  const { product_id, quantity } = req.body;
-  const user_id = req.user.user_id;
-
+// 1. Get User's Cart
+// Added 'ensureAuthenticated' to protect this route
+app.get('/cart', ensureAuthenticated, async (req, res) => {
   try {
-    // 1. Get the user's cart (Each user has exactly one based on your schema)
-    let cartRes = await pool.query("SELECT cart_id FROM carts WHERE user_id = $1", [user_id]);
-    
-    let cart_id;
-    if (cartRes.rows.length === 0) {
-      // Create it if it doesn't exist (safety check)
-      const newCart = await pool.query(
-        "INSERT INTO carts (user_id) VALUES ($1) RETURNING cart_id", 
-        [user_id]
-      );
-      cart_id = newCart.rows[0].cart_id;
-    } else {
-      cart_id = cartRes.rows[0].cart_id;
-    }
-
-    // 2. Use your existing UNIQUE constraint (cart_id, product_id) to update or insert
-    // This is the cleanest way to handle "Add to Cart" in Postgres
-    await pool.query(
-      `INSERT INTO cart_items (cart_id, product_id, quantity) 
-       VALUES ($1, $2, $3)
-       ON CONFLICT (cart_id, product_id) 
-       DO UPDATE SET quantity = cart_items.quantity + $3`,
-      [cart_id, product_id, quantity || 1]
-    );
-
-    res.json({ message: "Successfully added to your candy jar!" });
-  } catch (err) {
-    console.error("Cart Logic Error:", err.message);
-    res.status(500).json({ error: "Server Error" });
-  }
-});
-
-// Update Cart Item Quantity
-app.put('/cart/update', async (req, res) => {
-  const { cart_item_id, quantity } = req.body;
-
-  try {
-    // 1. Check if quantity is valid (must be at least 1)
-    if (quantity < 1) {
-      return res.status(400).json({ error: "Quantity must be at least 1" });
-    }
-
-    // 2. Update the database
-    await pool.query(
-      'UPDATE cart_items SET quantity = $1 WHERE cart_item_id = $2',
-      [quantity, cart_item_id]
-    );
-
-    res.json({ message: "Quantity updated" });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send("Server Error");
-  }
-});
-
-// 1. GET ALL ITEMS IN CART
-app.get('/cart', async (req, res) => {
-  if (!req.isAuthenticated()) return res.status(401).json([]);
-  try {
-    const cartItems = await pool.query(
-      `SELECT ci.cart_item_id, p.product_id, p.name, p.price, p.image_url, ci.quantity 
+    const cartRes = await pool.query(
+      `SELECT ci.cart_item_id, ci.quantity, p.product_id, p.name, p.price, p.image_url 
        FROM cart_items ci
        JOIN carts c ON ci.cart_id = c.cart_id
        JOIN products p ON ci.product_id = p.product_id
        WHERE c.user_id = $1`,
       [req.user.user_id]
     );
-    res.json(cartItems.rows);
+    res.json(cartRes.rows);
   } catch (err) {
+    console.error(err.message);
     res.status(500).send("Server Error");
   }
 });
 
-
-// Clear Cart (Safe Subquery Version)
-app.delete('/cart/clear', async (req, res) => {
-  // 1. Authenticated Check
-  if (!req.user || !req.user.user_id) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-
+// 2. Add Item to Cart
+app.post('/cart/add', ensureAuthenticated, async (req, res) => {
+  // We removed the "if (!req.user)" check because middleware handles it!
+  const { product_id, quantity } = req.body;
   try {
-    console.log(`[Clear Cart] Clearing for User ID: ${req.user.user_id}`);
+    // 1. Get or Create Cart for User
+    let cartRes = await pool.query('SELECT cart_id FROM carts WHERE user_id = $1', [req.user.user_id]);
+    
+    if (cartRes.rows.length === 0) {
+      cartRes = await pool.query(
+        'INSERT INTO carts (user_id) VALUES ($1) RETURNING cart_id', 
+        [req.user.user_id]
+      );
+    }
+    const cartId = cartRes.rows[0].cart_id;
 
-    // 2. The Fix: Use a Subquery. 
-    // "Delete all items where the cart_id belongs to this user"
-    const result = await pool.query(
+    // 2. Check if item exists in cart
+    const itemRes = await pool.query(
+      'SELECT * FROM cart_items WHERE cart_id = $1 AND product_id = $2',
+      [cartId, product_id]
+    );
+
+    if (itemRes.rows.length > 0) {
+      // Update quantity
+      const newQuantity = itemRes.rows[0].quantity + quantity;
+      await pool.query(
+        'UPDATE cart_items SET quantity = $1 WHERE cart_item_id = $2',
+        [newQuantity, itemRes.rows[0].cart_item_id]
+      );
+    } else {
+      // Insert new item
+      await pool.query(
+        'INSERT INTO cart_items (cart_id, product_id, quantity) VALUES ($1, $2, $3)',
+        [cartId, product_id, quantity]
+      );
+    }
+    res.json({ message: "Item added to cart" });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server Error");
+  }
+});
+
+// 3. Update Cart Item Quantity
+app.put('/cart/update', ensureAuthenticated, async (req, res) => {
+  const { cart_item_id, quantity } = req.body;
+  try {
+    await pool.query(
+      'UPDATE cart_items SET quantity = $1 WHERE cart_item_id = $2',
+      [quantity, cart_item_id]
+    );
+    res.json("Cart updated");
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server Error");
+  }
+});
+
+// 4. Clear Cart (The Safe Version we just fixed)
+// Note: Keep this ABOVE the /cart/:id route!
+app.delete('/cart/clear', ensureAuthenticated, async (req, res) => {
+  try {
+    await pool.query(
       `DELETE FROM cart_items 
        WHERE cart_id IN (SELECT cart_id FROM carts WHERE user_id = $1)`,
       [req.user.user_id]
     );
-
-    console.log(`[Clear Cart] Success! Deleted ${result.rowCount} items.`);
-    res.json({ success: true, message: "Cart cleared" });
-
+    res.json({ message: "Cart cleared" });
   } catch (err) {
-    console.error("--- DB ERROR IN CLEAR CART ---", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// DELETE ITEM FROM CART
-app.delete('/cart/:id', async (req, res) => {
-  try {
-    await pool.query("DELETE FROM cart_items WHERE cart_item_id = $1", [req.params.id]);
-    res.json({ message: "Item removed" });
-  } catch (err) {
+    console.error(err.message);
     res.status(500).send("Server Error");
   }
 });
 
-// Create Payment Intent (Stripe)
-app.post('/create-payment-intent', async (req, res) => {
-  if (!req.user) return res.status(401).json({ message: "Unauthorized" });
-
+// 5. Delete Single Item
+app.delete('/cart/:id', ensureAuthenticated, async (req, res) => {
   try {
-    // FIXED QUERY: Join cart_items -> carts -> products
+    const { id } = req.params;
+    await pool.query('DELETE FROM cart_items WHERE cart_item_id = $1', [id]);
+    res.json("Item deleted");
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server Error");
+  }
+});
+
+// 6. Create Payment Intent
+app.post('/create-payment-intent', ensureAuthenticated, async (req, res) => {
+  try {
     const cartRes = await pool.query(
       `SELECT p.price, ci.quantity 
        FROM cart_items ci 
@@ -425,25 +421,20 @@ app.post('/create-payment-intent', async (req, res) => {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
-    // Calculate total in CENTS
     const totalAmount = cartRes.rows.reduce((acc, item) => {
       return acc + (parseFloat(item.price) * 100 * item.quantity); 
     }, 0);
 
-    // Create the PaymentIntent
     const paymentIntent = await stripe.paymentIntents.create({
       amount: Math.round(totalAmount),
       currency: 'eur',
       automatic_payment_methods: { enabled: true },
     });
 
-    res.json({
-      clientSecret: paymentIntent.client_secret,
-    });
-
+    res.send({ clientSecret: paymentIntent.client_secret });
   } catch (err) {
-    console.error("Stripe Error:", err.message);
-    res.status(500).json({ message: "Payment Error" });
+    console.error(err.message);
+    res.status(500).send("Server Error");
   }
 });
 
