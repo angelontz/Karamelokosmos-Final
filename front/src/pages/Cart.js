@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom'; // Don't forget this import!
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 
@@ -22,10 +23,27 @@ const Cart = () => {
     fetchCart();
   }, []);
 
+  const updateQuantity = async (id, currentQuantity, change) => {
+    const newQuantity = currentQuantity + change;
+    if (newQuantity < 1) return;
+
+    try {
+      await axios.put('http://localhost:5000/cart/update', 
+        { cart_item_id: id, quantity: newQuantity },
+        { withCredentials: true }
+      );
+      fetchCart();
+      window.dispatchEvent(new Event('cartUpdated'));
+    } catch (err) {
+      console.error("Error updating quantity:", err);
+    }
+  };
+
   const removeItem = async (id) => {
     try {
       await axios.delete(`http://localhost:5000/cart/${id}`, { withCredentials: true });
       fetchCart();
+      window.dispatchEvent(new Event('cartUpdated'));
     } catch (err) {
       console.error("Error removing item:", err);
     }
@@ -33,18 +51,22 @@ const Cart = () => {
 
   const total = items.reduce((acc, item) => acc + (parseFloat(item.price) * item.quantity), 0);
 
-  if (loading) return <div className="page-container"><h2>{t('loading')}</h2></div>;
+  if (loading) return <div className="page-container"><h2>{t('loading')}...</h2></div>;
 
   return (
     <div className="page-container">
-      {/* Clean Title with Fallbacks */}
       <h1 className="cart-title">
         {i18n.language === 'el' ? 'Το καλάθι σου' : 'Your Cart'}
       </h1>
       
+      {/* Fixed Logic: Only ONE check here */}
       {items.length === 0 ? (
         <div className="empty-cart-container">
           <p className="empty-msg">{t('empty_cart')}</p>
+          
+          <Link to="/products" className="empty-cart-btn">
+            {t('go_shopping')} 🍬
+          </Link>
         </div>
       ) : (
         <div className="cart-grid">
@@ -59,7 +81,20 @@ const Cart = () => {
                 <div className="cart-card-details">
                   <h3>{item.name}</h3>
                   <p className="cart-card-price">{item.price} €</p>
-                  <p className="cart-card-qty">x {item.quantity}</p>
+                  
+                  <div className="cart-qty-controls">
+                    <button 
+                      className="qty-btn"
+                      onClick={() => updateQuantity(item.cart_item_id, item.quantity, -1)}
+                    > - </button>
+                    
+                    <span className="qty-number">{item.quantity}</span>
+                    
+                    <button 
+                      className="qty-btn"
+                      onClick={() => updateQuantity(item.cart_item_id, item.quantity, 1)}
+                    > + </button>
+                  </div>
                 </div>
                 <button 
                   onClick={() => removeItem(item.cart_item_id)} 
@@ -77,9 +112,7 @@ const Cart = () => {
               <span>{t('total')}:</span>
               <strong>{total.toFixed(2)} €</strong>
             </div>
-            <button className="checkout-action-btn">
-              {t('checkout')}
-            </button>
+            <Link to="/checkout"><button className="checkout-action-btn">{t('checkout')}</button></Link>
           </div>
         </div>
       )}

@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const passport = require('passport');
 const session = require('express-session');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 app.use(express.json());
@@ -94,8 +95,26 @@ passport.use(new GoogleStrategy({
 
 passport.serializeUser((user, done) => done(null, user.user_id));
 passport.deserializeUser(async (id, done) => {
-  const res = await pool.query('SELECT * FROM users WHERE user_id = $1', [id]);
-  done(null, res.rows[0]);
+  try {
+    // 1. Log that we are trying to find the user
+    // console.log(`[Debug] Deserializing user ID: ${id}`); 
+
+    if (!id) return done(null, false);
+
+    const res = await pool.query('SELECT * FROM users WHERE user_id = $1', [id]);
+
+    if (res.rows.length === 0) {
+      console.warn(`[Warning] Session active but user ID ${id} not found in DB.`);
+      return done(null, false); // User deleted?
+    }
+
+    // 2. Success
+    done(null, res.rows[0]); 
+  } catch (err) {
+    console.error("--- DESERIALIZE ERROR ---", err.message);
+    // 3. IMPORTANT: valid error handling so it doesn't hang
+    done(err, null); 
+  }
 });
 
 // --- AUTH ROUTES ---
@@ -308,6 +327,29 @@ app.post('/cart/add', async (req, res) => {
   }
 });
 
+// Update Cart Item Quantity
+app.put('/cart/update', async (req, res) => {
+  const { cart_item_id, quantity } = req.body;
+
+  try {
+    // 1. Check if quantity is valid (must be at least 1)
+    if (quantity < 1) {
+      return res.status(400).json({ error: "Quantity must be at least 1" });
+    }
+
+    // 2. Update the database
+    await pool.query(
+      'UPDATE cart_items SET quantity = $1 WHERE cart_item_id = $2',
+      [quantity, cart_item_id]
+    );
+
+    res.json({ message: "Quantity updated" });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server Error");
+  }
+});
+
 // 1. GET ALL ITEMS IN CART
 app.get('/cart', async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json([]);
@@ -326,13 +368,82 @@ app.get('/cart', async (req, res) => {
   }
 });
 
-// 2. DELETE ITEM FROM CART
+
+// Clear Cart (Safe Subquery Version)
+app.delete('/cart/clear', async (req, res) => {
+  // 1. Authenticated Check
+  if (!req.user || !req.user.user_id) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    console.log(`[Clear Cart] Clearing for User ID: ${req.user.user_id}`);
+
+    // 2. The Fix: Use a Subquery. 
+    // "Delete all items where the cart_id belongs to this user"
+    const result = await pool.query(
+      `DELETE FROM cart_items 
+       WHERE cart_id IN (SELECT cart_id FROM carts WHERE user_id = $1)`,
+      [req.user.user_id]
+    );
+
+    console.log(`[Clear Cart] Success! Deleted ${result.rowCount} items.`);
+    res.json({ success: true, message: "Cart cleared" });
+
+  } catch (err) {
+    console.error("--- DB ERROR IN CLEAR CART ---", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE ITEM FROM CART
 app.delete('/cart/:id', async (req, res) => {
   try {
     await pool.query("DELETE FROM cart_items WHERE cart_item_id = $1", [req.params.id]);
     res.json({ message: "Item removed" });
   } catch (err) {
     res.status(500).send("Server Error");
+  }
+});
+
+// Create Payment Intent (Stripe)
+app.post('/create-payment-intent', async (req, res) => {
+  if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
+  try {
+    // FIXED QUERY: Join cart_items -> carts -> products
+    const cartRes = await pool.query(
+      `SELECT p.price, ci.quantity 
+       FROM cart_items ci 
+       JOIN carts c ON ci.cart_id = c.cart_id 
+       JOIN products p ON ci.product_id = p.product_id 
+       WHERE c.user_id = $1`, 
+      [req.user.user_id]
+    );
+
+    if (cartRes.rows.length === 0) {
+      return res.status(400).json({ message: "Cart is empty" });
+    }
+
+    // Calculate total in CENTS
+    const totalAmount = cartRes.rows.reduce((acc, item) => {
+      return acc + (parseFloat(item.price) * 100 * item.quantity); 
+    }, 0);
+
+    // Create the PaymentIntent
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(totalAmount),
+      currency: 'eur',
+      automatic_payment_methods: { enabled: true },
+    });
+
+    res.json({
+      clientSecret: paymentIntent.client_secret,
+    });
+
+  } catch (err) {
+    console.error("Stripe Error:", err.message);
+    res.status(500).json({ message: "Payment Error" });
   }
 });
 

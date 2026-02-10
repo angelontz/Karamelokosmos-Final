@@ -20,7 +20,8 @@ const resources = {
       "empty_cart": "Your cart is empty! 🍬",
       "total": "Total",
       "checkout": "Checkout",
-      "loading": "Loading..."
+      "loading": "Loading...",
+      "go_shopping": "Go Shopping"
     }
   },
   el: {
@@ -40,7 +41,8 @@ const resources = {
       "empty_cart": "Το καλάθι σας είναι άδειο! 🍬",
       "total": "Σύνολο",
       "checkout": "Ολοκλήρωση Αγοράς",
-      "loading": "Φόρτωση..."
+      "loading": "Φόρτωση...",
+      "go_shopping": "Πάμε για ψώνια"
     }
   }
 };
