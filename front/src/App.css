@@ -644,3 +644,64 @@
   padding-top: 12px; 
   text-align: center; 
 }
+
+/* --- ORDERS PAGE --- */
+.orders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.order-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 20px;
+  background-color: #fff;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.order-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+}
+
+.order-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.order-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.order-status {
+  padding: 6px 12px;
+  border-radius: 20px;
+  background-color: #e3f2fd;
+  color: #1976d2;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.order-date {
+  color: #777;
+  font-size: 0.95rem;
+  margin: 5px 0;
+}
+
+.order-total {
+  margin-top: 10px;
+  font-size: 1.1rem;
+  color: #333;
+}

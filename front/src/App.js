@@ -9,6 +9,8 @@ import Products from './pages/Products';
 import ProductDetails from './pages/ProductDetails';
 import Cart from './pages/Cart';
 import Checkout from './pages/Checkout';
+import Orders from './pages/Orders';
+
 // Allow cookies to be sent with every request
 axios.defaults.withCredentials = true;
 
@@ -110,6 +112,7 @@ useEffect(() => {
           <Route path="/products/:id" element={<ProductDetails />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/checkout" element={<Checkout />} />
+          <Route path="/orders" element={<Orders />} />
         </Routes>
       </div>
     </Router>

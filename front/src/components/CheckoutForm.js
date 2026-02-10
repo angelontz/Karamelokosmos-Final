@@ -36,10 +36,10 @@ export default function CheckoutForm() {
       // Small timeout to ensure Stripe processing has fully settled
       setTimeout(async () => {
         try {
-          await axios.delete('http://localhost:5000/cart/clear', { withCredentials: true });
+          await axios.post('http://localhost:5000/orders', {}, { withCredentials: true });
           window.dispatchEvent(new Event('cartUpdated'));
-          alert("Payment Successful! 🍬 Order placed.");
-          navigate("/products");
+          alert("Payment Successful! 🍬 Order saved.");
+          navigate("/orders");
         } catch (err) {
           console.error("Cart clear error:", err);
           navigate("/products");

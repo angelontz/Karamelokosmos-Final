@@ -438,6 +438,121 @@ app.post('/create-payment-intent', ensureAuthenticated, async (req, res) => {
   }
 });
 
+// ==========================================
+// ORDER HISTORY ROUTES
+// ==========================================
+
+// 1. Create New Order (Moves Cart -> Order -> Clears Cart)
+app.post('/orders', ensureAuthenticated, async (req, res) => {
+  const client = await pool.connect(); // Use a client for transactions
+  try {
+    await client.query('BEGIN'); // Start Transaction
+
+    const userId = req.user.user_id;
+
+    // A. Get current cart items
+    const cartRes = await client.query(
+      `SELECT ci.product_id, ci.quantity, p.price 
+       FROM cart_items ci
+       JOIN carts c ON ci.cart_id = c.cart_id
+       JOIN products p ON ci.product_id = p.product_id
+       WHERE c.user_id = $1`,
+      [userId]
+    );
+
+    if (cartRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: "Cart is empty" });
+    }
+
+    // B. Calculate Total
+    const totalAmount = cartRes.rows.reduce((sum, item) => {
+      return sum + (Number(item.price) * item.quantity);
+    }, 0);
+
+    // C. Create Order Record
+    // Matches your table: user_id, total_amount. 
+    // order_date and status have defaults in your DB.
+    const orderRes = await client.query(
+      'INSERT INTO orders (user_id, total_amount) VALUES ($1, $2) RETURNING order_id',
+      [userId, totalAmount]
+    );
+    const orderId = orderRes.rows[0].order_id;
+
+    // D. Move items to order_items
+    // Matches your table: order_id, product_id, quantity, price_at_order
+    for (const item of cartRes.rows) {
+      await client.query(
+        `INSERT INTO order_items (order_id, product_id, quantity, price_at_order)
+         VALUES ($1, $2, $3, $4)`,
+        [orderId, item.product_id, item.quantity, item.price]
+      );
+    }
+
+    // E. Clear the Cart (Inside the same transaction!)
+    await client.query(
+      `DELETE FROM cart_items 
+       WHERE cart_id IN (SELECT cart_id FROM carts WHERE user_id = $1)`,
+      [userId]
+    );
+
+    await client.query('COMMIT'); // Save changes
+    res.json({ message: "Order placed successfully", orderId });
+
+  } catch (err) {
+    await client.query('ROLLBACK'); // Undo if error
+    console.error("Order Creation Error:", err);
+    res.status(500).json({ error: "Failed to create order" });
+  } finally {
+    client.release();
+  }
+});
+
+// 2. Get User's Order History
+app.get('/orders', ensureAuthenticated, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM orders WHERE user_id = $1 ORDER BY order_date DESC',
+      [req.user.user_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server Error");
+  }
+});
+
+// 3. Get Specific Order Details (Optional, for "View Details" button)
+app.get('/orders/:id', ensureAuthenticated, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Check if order belongs to user
+    const orderCheck = await pool.query(
+      'SELECT * FROM orders WHERE order_id = $1 AND user_id = $2',
+      [id, req.user.user_id]
+    );
+    
+    if (orderCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // Get items
+    const items = await pool.query(
+      `SELECT oi.*, p.name, p.image_url 
+       FROM order_items oi
+       JOIN products p ON oi.product_id = p.product_id
+       WHERE oi.order_id = $1`,
+      [id]
+    );
+
+    res.json({ order: orderCheck.rows[0], items: items.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server Error");
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

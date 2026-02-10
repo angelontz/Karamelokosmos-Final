@@ -21,7 +21,11 @@ const resources = {
       "total": "Total",
       "checkout": "Checkout",
       "loading": "Loading...",
-      "go_shopping": "Go Shopping"
+      "go_shopping": "Go Shopping",
+      "my_orders": "My Order History",
+      "no_orders": "You haven't placed any orders yet.",
+      "order_number": "Order",
+      "date": "Date"
     }
   },
   el: {
@@ -42,7 +46,11 @@ const resources = {
       "total": "Σύνολο",
       "checkout": "Ολοκλήρωση Αγοράς",
       "loading": "Φόρτωση...",
-      "go_shopping": "Πάμε για ψώνια"
+      "go_shopping": "Πάμε για ψώνια",
+      "my_orders": "Ιστορικό Παραγγελιών",
+      "no_orders": "Δεν έχετε κάνει καμία παραγγελία ακόμα.",
+      "order_number": "Παραγγελία",
+      "date": "Ημερομηνία"
     }
   }
 };
